@@ -1,9 +1,14 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
+use std::path::Path;
+use chrono::DateTime;
+use chrono::FixedOffset;
 use serde_json;
 use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
+
+const MAX_BACKUPS: usize = 10;
 
 #[derive(Debug)]
 pub struct DBError(String);
@@ -45,6 +50,7 @@ pub fn load_db<T>(path: &str) -> Result<DB<T>, DBError> where T: DeserializeOwne
 }
 
 pub fn save_db<T>(path: &str, contents: &DB<T>) -> Result<(), DBError> where T: Serialize {
+    delete_old_backups()?;
     let temp_path  = format!("{}.{}", path, "temp");
     let backup_path  = format!("backups/{}", chrono::Local::now().to_rfc3339());
     let file_path = path.to_string();
@@ -64,6 +70,29 @@ pub fn save_db<T>(path: &str, contents: &DB<T>) -> Result<(), DBError> where T: 
     fs::remove_file(temp_path)?;
     Ok(())
 }
+
+fn delete_old_backups() -> Result<(), std::io::Error>{{
+    let backup_dir  = "backups";
+    let backup_path = Path::new(backup_dir);
+    let paths = fs::read_dir(backup_dir)?;
+    let mut file_names: Vec<DateTime<FixedOffset>> = Vec::new();
+    for path_result in paths {
+        match path_result {
+            Ok(path) => file_names.push(
+                DateTime::parse_from_rfc3339(path.file_name().to_str().unwrap()).unwrap()
+            ),
+            Err(_) => {}
+        }
+    }
+    file_names.sort();
+
+    let backups_to_delete = file_names.len().saturating_sub(MAX_BACKUPS);
+    for entry in file_names.iter().take(backups_to_delete) {
+        let file_path = backup_path.join(entry.to_rfc3339());
+        fs::remove_file(file_path)?;
+    }
+    Ok(())
+}}
 
 #[cfg(test)]
 mod tests {
