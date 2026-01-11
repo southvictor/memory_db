@@ -62,11 +62,9 @@ pub fn save_db<T>(path: &str, contents: &DB<T>) -> Result<(), DBError> where T: 
     let temp_path  = get_tmp_path(path);
     let file_path = get_db_path(path);
 
-    // Ensure parent directory for DB file exists, if any.
-    if let Some(parent) = Path::new(&file_path).parent() {
-        if !parent.as_os_str().is_empty() && !fs::exists(parent)? {
-            fs::create_dir_all(parent)?;
-        }
+    // Ensure directory for DB file exists, if any.
+    if !fs::exists(Path::new(&path))? {
+        fs::create_dir_all(Path::new(&path))?;
     }
 
     fs::File::create(&temp_path)?;
