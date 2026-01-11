@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use chrono::DateTime;
 use chrono::FixedOffset;
 use serde_json;
@@ -35,8 +35,16 @@ impl From<std::io::Error> for DBError {
     }
 }
 
+fn get_db_path(path: &str) -> String {
+    return format!("{}/memory.db", path);
+}
+
+fn get_tmp_path(path: &str) -> String {
+    return format!("{}/memory.db.tmp", path);
+}
+
 pub fn load_db<T>(path: &str) -> Result<DB<T>, DBError> where T: DeserializeOwned {
-    let contents: String = fs::read_to_string(path).unwrap_or_default();
+    let contents: String = fs::read_to_string(get_db_path(path)).unwrap_or_default();
     let mut db: HashMap<String, T> = HashMap::new();
     for line in contents.lines() {
         let kv_option: Option<(&str, &str)> = line.split_once('=');
@@ -50,17 +58,27 @@ pub fn load_db<T>(path: &str) -> Result<DB<T>, DBError> where T: DeserializeOwne
 }
 
 pub fn save_db<T>(path: &str, contents: &DB<T>) -> Result<(), DBError> where T: Serialize {
-    delete_old_backups()?;
-    let temp_path  = format!("{}.{}", path, "temp");
-    let backup_path  = format!("backups/{}", chrono::Local::now().to_rfc3339());
-    let file_path = path.to_string();
+    delete_old_backups(path)?;
+    let temp_path  = get_tmp_path(path);
+    let file_path = get_db_path(path);
+
+    // Ensure parent directory for DB file exists, if any.
+    if let Some(parent) = Path::new(&file_path).parent() {
+        if !parent.as_os_str().is_empty() && !fs::exists(parent)? {
+            fs::create_dir_all(parent)?;
+        }
+    }
+
     fs::File::create(&temp_path)?;
     if !(fs::exists(&file_path)?) {
         fs::File::create(&file_path)?;
     }
-    if !(fs::exists("backups")?) {
-        fs::create_dir("backups")?;
+    // Backups directory lives alongside the DB file, under "<db_dir>/backups".
+    let backup_dir: PathBuf = Path::new(path).join("backups");
+    if !fs::exists(&backup_dir)? {
+        fs::create_dir_all(&backup_dir)?;
     }
+    let backup_path = backup_dir.join(chrono::Local::now().to_rfc3339());
     fs::copy(&file_path, &backup_path)?;
     let mut temp_file = fs::OpenOptions::new().write(true).create(true).append(true).open(&temp_path)?;
     for (key,value) in contents {
@@ -71,10 +89,16 @@ pub fn save_db<T>(path: &str, contents: &DB<T>) -> Result<(), DBError> where T: 
     Ok(())
 }
 
-fn delete_old_backups() -> Result<(), std::io::Error>{{
-    let backup_dir  = "backups";
-    let backup_path = Path::new(backup_dir);
-    let paths = fs::read_dir(backup_dir)?;
+fn delete_old_backups(db_path: &str) -> Result<(), std::io::Error> {
+    let db_path = Path::new(db_path);
+    let backup_dir: PathBuf = db_path.join("backups");
+
+    if !backup_dir.exists() {
+        return Ok(());
+    }
+
+    let backup_path = backup_dir.as_path();
+    let paths = fs::read_dir(&backup_dir)?;
     let mut file_names: Vec<DateTime<FixedOffset>> = Vec::new();
     for path_result in paths {
         match path_result {
@@ -92,7 +116,7 @@ fn delete_old_backups() -> Result<(), std::io::Error>{{
         fs::remove_file(file_path)?;
     }
     Ok(())
-}}
+}
 
 #[cfg(test)]
 mod tests {
